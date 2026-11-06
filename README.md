@@ -16,8 +16,8 @@
 
 ```bash
 # Clone
-git clone https://github.com/SpaqiTechnologies/DroneAI.git
-cd DroneAI
+git clone https://github.com/armansuri300105/Drone.git
+cd Drone
 
 # Setup venv + deps
 python -m venv venv
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 python run_simulation.py
 ```
 
-→ Open **http://localhost:5000** in your browser. The map opens centered on **Gjakova, Kosovo** (42.3803°N, 20.4308°E) — that's where the simulated drone spawns.
+→ Open **http://localhost:5000** in your browser. The map opens centered on the default coordinates (42.3803°N, 20.4308°E) — that's where the simulated drone spawns.
 
 ---
 
@@ -44,12 +44,12 @@ Click **Start** in the *Simulation* card (top of the right sidebar).
 You should see:
 
 - Event log: `Simulation started (normal, 1x)`
-- Purple ✈ drone icon appears on the map at Gjakova
+- Purple ✈ drone icon appears on the map at the home location
 - Green 🏠 home marker appears at the same spot
 - Telemetry overlay (right edge of map) starts ticking: altitude, battery, satellites
 - Wait ~2 seconds for the GPS lock — satellites should reach **10**
 
-![Dashboard just after boot on Gjakova](docs/screenshots/01_dashboard_idle.png)
+![Dashboard just after boot](docs/screenshots/01_dashboard_idle.png)
 
 *Fresh dashboard, DISARMED, all telemetry fields waiting for data.*
 
@@ -64,7 +64,7 @@ You should see:
 - Waypoint list in the right panel fills with rows showing `lat, lon` + editable altitude
 - Event log: `Waypoint N added`
 
-Add **2–5 waypoints** for a good first flight. Each one should be at least 100m from the previous (scroll out and click around Gjakova).
+Add **2–5 waypoints** for a good first flight. Each one should be at least 100m from the previous (scroll out and click around the map).
 
 > **Tip:** edit any waypoint's altitude inline by clicking its number, typing, and pressing Enter.
 
@@ -342,7 +342,7 @@ to *avoid*, not engage.
 
 ## Contributing
 
-Open an issue or PR at https://github.com/SpaqiTechnologies/DroneAI.
+Open an issue or PR at https://github.com/armansuri300105/Drone.
 
 All PRs should keep the test suite green:
 

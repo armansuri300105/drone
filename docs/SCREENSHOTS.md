@@ -3,7 +3,7 @@
 Live captures of the running Flask dashboard at
 `http://localhost:5000/` after the default `python run_simulation.py`.
 
-Map centered on **Gjakova, Kosovo** (42.3803°N, 20.4308°E) — the
+Map centered on default coordinates (42.3803°N, 20.4308°E) — the
 default home position for a fresh simulation.
 
 ---
@@ -34,7 +34,7 @@ features drawer.
 ## 2. Mission in flight
 
 After Start → 3 waypoints uploaded → ARM → mission Start. The drone
-is now flying east/north-east from Gjakova at 60 m/s and 30 m
+is now flying east/north-east from the launch site at 60 m/s and 30 m
 altitude.
 
 ![Dashboard with drone flying a mission](screenshots/02_dashboard_flying.png)

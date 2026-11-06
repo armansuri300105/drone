@@ -157,7 +157,7 @@ def create_drone():
         raise
 
     try:
-        # Set initial positions (Gjakova, Kosovo) - drone starts at home
+        # Set initial positions - drone starts at home
         drone.set_home_position(42.3803, 20.4308)
         drone.set_current_position(42.3803, 20.4308)  # Start at home to avoid geofence breach
         drone.gps_sensor.set_position(42.3803, 20.4308, 50.0)
