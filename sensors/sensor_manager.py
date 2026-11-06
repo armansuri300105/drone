@@ -1,0 +1,148 @@
+"""
+Sensor manager for Drone AI application.
+Manages all sensor connections and data collection.
+"""
+
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+import logging
+
+from . import battery_sensor, wind_sensor, ultrasonic_sensor, imu_sensor
+from .sensor import Sensor
+
+# Use TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from core.drone import Drone
+
+logger = logging.getLogger(__name__)
+
+
+class SensorReadingInvalidException(Exception):
+    """Exception raised when sensor reading is invalid."""
+    pass
+
+
+class SensorSignalWeakException(Exception):
+    """Exception raised when sensor signal is weak."""
+    pass
+
+
+class SensorManager:
+    """
+    Manages all sensor connections, registration, and data collection for the drone.
+    Provides connection status and measured values.
+    """
+
+    def __init__(self):
+        self._sensors: Dict[str, Sensor] = {}
+        self._sensor_values: Dict[str, object] = {}
+        self._last_update = 0.0
+
+        # Initialize sensors
+        self.register_sensor(battery_sensor.BatterySensor())
+        self.register_sensor(wind_sensor.WindSensor())
+        self.register_sensor(ultrasonic_sensor.UltrasonicSensor())
+        self.register_sensor(imu_sensor.IMUSensor())
+
+    def register_sensor(self, sensor: Sensor):
+        """Register a sensor by its type."""
+        if not isinstance(sensor, Sensor):
+            raise ValueError(f"Sensor must inherit from Sensor base class")
+
+        sensor_type = sensor.type
+        if sensor_type in self._sensors:
+            raise ValueError(f"Sensor type '{sensor_type}' already registered")
+
+        self._sensors[sensor_type] = sensor
+        logger.info(f"Registered sensor: {sensor_type}")
+
+    def start(self):
+        """Start all sensors."""
+        for sensor in self._sensors.values():
+            try:
+                sensor.start()
+            except Exception as e:
+                logger.error(f"Failed to start sensor {sensor.type}: {str(e)}")
+                raise
+
+    def stop(self):
+        """Stop all sensors."""
+        for sensor in reversed(self._sensors.values()):
+            try:
+                sensor.stop()
+            except Exception as e:
+                logger.error(f"Failed to stop sensor {sensor.type}: {str(e)}")
+
+    def update(self, timestamp: float):
+        """Update all sensors and store last values."""
+        self._last_update = timestamp
+        for sensor in self._sensors.values():
+            try:
+                if sensor.type == "ultrasonic":
+                    # Get distance reading and validate range
+                    dist_m = sensor.measure_distance()
+
+                    # Basic sanity checks
+                    if dist_m < 0.1 or dist_m > 25:  # typical ultra range
+                        raise SensorReadingInvalidException(
+                            f"Ultrasonic out of range: {dist_m:.2f}m"
+                        )
+
+                    # Signal quality check (example implementation)
+                    if sensor.signal_strength < 0.7:
+                        raise SensorSignalWeakException(
+                            f"Ultra signal weak ({sensor.signal_strength:.1f})"
+                        )
+
+                    self._sensor_values[sensor.type] = dist_m
+                elif sensor.type == "imu":
+                    # Get IMU reading
+                    reading = sensor.update()
+                    if reading.is_valid():
+                        self._sensor_values[sensor.type] = reading
+                    else:
+                        raise SensorReadingInvalidException("IMU reading invalid")
+                else:
+                    value = sensor.measure()
+                    self._sensor_values[sensor.type] = value
+            except Exception as e:
+                logger.warning(f"Sensor {sensor.type} update failed: {str(e)}")
+            # Keep last known good value by default behavior of _sensor_values
+
+    def get(self, sensor_type: str) -> Optional[object]:
+        """Get the latest measured value for a sensor type."""
+        return self._sensor_values.get(sensor_type)
+
+    def get_all(self) -> Dict[str, object]:
+        """Get all latest sensor values."""
+        return dict(self._sensor_values.items())
+
+    def set_calibration(self, sensor_type: str, cal_data):
+        """Set calibration data for a sensor."""
+        if sensor_type not in self._sensors:
+            raise ValueError(f"Unknown sensor type: {sensor_type}")
+
+        self._sensors[sensor_type].set_calibration(cal_data)
+
+    def get_config(self, sensor_type: str):
+        """Get sensor configuration."""
+        if sensor_type not in self._sensors:
+            raise ValueError(f"Unknown sensor type: {sensor_type}")
+
+        return self._sensors[sensor_type].get_config()
+
+    def reset(self):
+        """Reset sensor values (not hardware)."""
+        self._sensor_values.clear()
+
+    def check_sensor_connection(self) -> bool:
+        """Check if all sensors are connected and responding."""
+        # For simulation, always return True unless explicitly set otherwise
+        return getattr(self, '_connection_ok', True)
+
+    def simulate_sensor_failure(self):
+        """Simulate sensor connection failure for testing."""
+        self._connection_ok = False
+
+    def restore_sensor_connection(self):
+        """Restore sensor connection for testing."""
+        self._connection_ok = True

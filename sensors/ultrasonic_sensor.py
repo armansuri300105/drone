@@ -1,0 +1,130 @@
+"""
+Ultrasonic distance sensor implementation for Drone_AI_App
+"""
+
+import time
+import math
+import random  # temporary simulation only
+
+from .sensor import Sensor
+
+
+class UltrasonicSensor(Sensor):
+    """HCSR04-style ultrasonic distance sensor."""
+
+    def __init__(self, name="ultra", pin_trigger=17, pin_echo=27, units="meters",
+                 update_rate_hz=50, min_range_cm=2, max_range_cm=400,
+                 noise_floor_cm=0.5, static_offset_cm=0):
+        self.type = "ultrasonic"
+        self.name = name
+        self.pin_trigger = pin_trigger
+        self.pin_echo = pin_echo
+        self.units = units.lower()
+        self.update_rate_hz = update_rate_hz
+        self.last_update = time.monotonic()
+
+        # Ranges (safety limits)
+        self.min_range_cm = min_range_cm  # cm
+        self.max_range_cm = max_range_cm  # cm
+
+        # Measurement characteristics
+        self.noise_floor_cm = noise_floor_cm  # cm RMS noise assumed
+        self.static_offset_cm = static_offset_cm  # cm (sensor zero-point error)
+
+        # Internal state
+        self._raw_us = 0
+        self._distance_cm = float("nan")
+        self._valid = False
+        self.signal_strength = 1.0  # For failsafe checks
+
+    def start(self):
+        """Start the sensor."""
+        pass
+
+    def stop(self):
+        """Stop the sensor."""
+        pass
+
+    def initialize(self):
+        """GPIO setup and initialization."""
+        # In a real deployment this would configure pins, set modes, etc.
+        # For simulation we'll just log and start the "clock"
+        pass
+
+    def update(self):
+        """Read ultrasonic range in cm."""
+        now = time.monotonic()
+        if now - self.last_update < 1 / self.update_rate_hz:
+            return self._distance_cm
+
+        # Simulated measurement (replace with actual GPIO timing)
+        raw_us = int(20 + 3500 + random.gauss(0, 40))  # mean ~3520us +/-40us
+        distance_cm = self._convert(raw_us)
+
+        # Basic filtering (moving window not shown for brevity)
+        if not math.isnan(self._distance_cm) and abs(distance_cm - self._distance_cm) > self.noise_floor_cm:
+            distance_cm = self._distance_cm
+
+        self._raw_us = raw_us
+        self._distance_cm = distance_cm
+        self.last_update = now
+
+        self._valid = (not math.isnan(distance_cm)) and \
+                      (self.min_range_cm <= distance_cm <= self.max_range_cm)
+
+        return self._distance_cm
+
+    def measure(self):
+        """Alias for update() to match sensor interface."""
+        return self.update()
+
+    def measure_distance(self):
+        """Get distance measurement in meters."""
+        self.update()
+        return self._distance_cm / 100.0  # Convert to meters
+
+    def _convert(self, raw_us: int) -> float:
+        """Convert time-of-flight to distance."""
+        # Speed of sound ~343 m/s @ 20C, converted to cm/us factor
+        return raw_us * 0.01715  # cm = us * 0.01715
+
+    def is_valid(self):
+        """True if last reading is valid (within range and plausible)."""
+        return self._valid
+
+    def get_distance(self):
+        """Return distance in configured units."""
+        if self.units == "meters":
+            return self._distance_cm / 100.0
+        elif self.units == "feet":
+            return self._distance_cm / 2.54 / 12.0
+        else:  # cm
+            return self._distance_cm
+
+    def to_dict(self):
+        """Convenience serialization."""
+        return {
+            **super().to_dict(),
+            "raw_us": self._raw_us,
+            "distance_cm": self._distance_cm,
+            "valid": self._valid
+        }
+
+
+# Example usage (not executed in tests)
+if __name__ == "__main__":
+    sensor = UltrasonicSensor(update_rate_hz=10, min_range_cm=5, max_range_cm=300,
+                              noise_floor_cm=2.0, static_offset_cm=-0.8)
+
+    print(f"Initializing {sensor.name}...")
+    sensor.initialize()
+
+    try:
+        while True:
+            sensor.update()
+            d = sensor.get_distance()
+            units = "meters" if d > 100 else "cm"
+            print(f"{sensor.name}: {d:.2f} {units}, valid={sensor.is_valid()}", end="\r")
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nCleanup...")
