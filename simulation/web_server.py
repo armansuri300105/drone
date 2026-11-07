@@ -402,55 +402,59 @@ def simulation_loop():
         drone.battery_sensor.battery_level = max(0, drone.battery_sensor.battery_level - battery_drain_rate * update_interval * speed)
         drone.battery_level = drone.battery_sensor.battery_level
 
-        # Simulate movement if flying. The active mission (auto handler)
-        # gets priority — if a mission is running, we fly to its current
-        # waypoint. Otherwise fall back to the legacy `waypoints` list
-        # used by the RTH path.
-        mission_target = _active_mission_target() if drone.is_flying else None
+        # Simulate movement if flying. RTH and Landing take priority over normal mission.
+        if getattr(drone, '_is_landing', False) and drone.is_flying:
+            current_lat, current_lon = drone.current_position
+            current_alt = drone.current_altitude
+            if current_alt > 0.5:
+                step = 1.0 * speed
+                current_alt = max(0.0, current_alt - step)
+                drone.current_altitude = current_alt
+                drone.gps_sensor.set_position(current_lat, current_lon, current_alt)
+            else:
+                drone.current_altitude = 0.0
+                drone.gps_sensor.set_position(current_lat, current_lon, 0.0)
+                drone._is_flying = False
+                drone._is_landing = False
+                drone.disarm("landing_complete")
+                socketio.emit('landed', {'position': {'lat': current_lat, 'lon': current_lon}})
+                socketio.emit('disarmed', {'reason': 'landing_complete'})
 
-        if mission_target is not None:
-            target_lat, target_lon, target_alt, auto_handler, wp_obj = mission_target
+        elif getattr(drone, '_is_returning_home', False) and drone.is_flying:
+            target_lat, target_lon = drone.home_position
             current_lat, current_lon = drone.current_position
             current_alt = drone.current_altitude
 
-            move_speed = 0.0001 * speed  # ~11 m/update at 10 Hz
+            move_speed = 0.0001 * speed
 
             dlat = target_lat - current_lat
             dlon = target_lon - current_lon
             dist = (dlat**2 + dlon**2)**0.5
 
-            # Climb to waypoint altitude (1 m/update so it ramps quickly)
-            if abs(current_alt - target_alt) > 0.5:
-                step = 1.0 * speed
-                current_alt += step if target_alt > current_alt else -step
-                drone.current_altitude = current_alt
-
             if dist < move_speed * 1.5:
-                # Reached this waypoint — advance via the auto handler
-                drone.set_current_position(target_lat, target_lon)
-                drone.gps_sensor.set_position(target_lat, target_lon, current_alt)
-                try:
-                    auto_handler._current_waypoint_index += 1
-                    auto_handler._waypoints_completed += 1
-                    socketio.emit('waypoint_reached', {
-                        'index': auto_handler._current_waypoint_index,
-                        'position': {'lat': target_lat, 'lon': target_lon},
-                        'remaining': len(auto_handler._mission.waypoints) - auto_handler._current_waypoint_index,
-                    })
-                    # If that was the last waypoint, mark mission complete + land
-                    if auto_handler._current_waypoint_index >= len(auto_handler._mission.waypoints):
-                        from core.mission.mission import MissionState
-                        auto_handler._mission_state = MissionState.COMPLETED
-                        if auto_handler._mission:
-                            auto_handler._mission.state = MissionState.COMPLETED
-                        drone._is_flying = False
-                        socketio.emit('mission_completed', {
-                            'mission_id': auto_handler._mission.id if auto_handler._mission else None,
-                        })
-                except Exception:
-                    pass
+                # Arrived over home point, descend and land
+                if current_alt > 0.5:
+                    step = 1.0 * speed
+                    current_alt = max(0.0, current_alt - step)
+                    drone.current_altitude = current_alt
+                    drone.gps_sensor.set_position(target_lat, target_lon, current_alt)
+                else:
+                    drone.current_altitude = 0.0
+                    drone.set_current_position(target_lat, target_lon)
+                    drone.gps_sensor.set_position(target_lat, target_lon, 0.0)
+                    drone._is_flying = False
+                    drone._is_returning_home = False
+                    drone.disarm("returned_to_home")
+                    socketio.emit('landed', {'position': {'lat': target_lat, 'lon': target_lon}})
+                    socketio.emit('disarmed', {'reason': 'returned_to_home'})
             else:
-                # Move toward the current waypoint
+                # Maintain safe cruise altitude while flying home
+                rth_alt = max(current_alt, 25.0)
+                if abs(current_alt - rth_alt) > 0.5:
+                    step = 1.0 * speed
+                    current_alt += step if rth_alt > current_alt else -step
+                    drone.current_altitude = current_alt
+
                 new_lat = current_lat + (dlat / dist) * move_speed
                 new_lon = current_lon + (dlon / dist) * move_speed
                 drone.set_current_position(new_lat, new_lon)
@@ -461,6 +465,62 @@ def simulation_loop():
                     heading += 360
                 drone.gps_sensor.set_heading(heading)
                 drone.gps_sensor.set_speed(12.0 * speed)
+
+        elif drone.is_flying:
+            mission_target = _active_mission_target()
+            if mission_target is not None:
+                target_lat, target_lon, target_alt, auto_handler, wp_obj = mission_target
+                current_lat, current_lon = drone.current_position
+                current_alt = drone.current_altitude
+
+                move_speed = 0.0001 * speed  # ~11 m/update at 10 Hz
+
+                dlat = target_lat - current_lat
+                dlon = target_lon - current_lon
+                dist = (dlat**2 + dlon**2)**0.5
+
+                # Climb to waypoint altitude (1 m/update so it ramps quickly)
+                if abs(current_alt - target_alt) > 0.5:
+                    step = 1.0 * speed
+                    current_alt += step if target_alt > current_alt else -step
+                    drone.current_altitude = current_alt
+
+                if dist < move_speed * 1.5:
+                    # Reached this waypoint — advance via the auto handler
+                    drone.set_current_position(target_lat, target_lon)
+                    drone.gps_sensor.set_position(target_lat, target_lon, current_alt)
+                    try:
+                        auto_handler._current_waypoint_index += 1
+                        auto_handler._waypoints_completed += 1
+                        socketio.emit('waypoint_reached', {
+                            'index': auto_handler._current_waypoint_index,
+                            'position': {'lat': target_lat, 'lon': target_lon},
+                            'remaining': max(0, len(auto_handler._mission.waypoints) - auto_handler._current_waypoint_index),
+                        })
+                        # If that was the last waypoint, mark mission complete + land
+                        if auto_handler._current_waypoint_index >= len(auto_handler._mission.waypoints):
+                            from core.mission.mission import MissionState
+                            auto_handler._mission_state = MissionState.COMPLETED
+                            if auto_handler._mission:
+                                auto_handler._mission.state = MissionState.COMPLETED
+                            drone._is_flying = False
+                            socketio.emit('mission_completed', {
+                                'mission_id': auto_handler._mission.id if auto_handler._mission else None,
+                            })
+                    except Exception:
+                        pass
+                else:
+                    # Move toward the current waypoint
+                    new_lat = current_lat + (dlat / dist) * move_speed
+                    new_lon = current_lon + (dlon / dist) * move_speed
+                    drone.set_current_position(new_lat, new_lon)
+                    drone.gps_sensor.set_position(new_lat, new_lon, current_alt)
+                    import math
+                    heading = math.degrees(math.atan2(dlon, dlat))
+                    if heading < 0:
+                        heading += 360
+                    drone.gps_sensor.set_heading(heading)
+                    drone.gps_sensor.set_speed(12.0 * speed)
 
         elif drone.is_flying and waypoints and current_waypoint_idx < len(waypoints):
             target = waypoints[current_waypoint_idx]
@@ -538,8 +598,22 @@ def simulation_loop():
         except Exception as e:
             pass  # Silently handle sensor update errors during simulation
 
-        # Check failsafes
-        drone.failsafe_manager.check_battery(drone.battery_level)
+        # Check failsafes & Smart Low-Battery Auto-RTH
+        battery_action = drone.failsafe_manager.check_battery(drone.battery_level)
+        if (drone.battery_level <= 20.0 or battery_action == FailsafeAction.RETURN_TO_HOME) and drone.is_flying and not getattr(drone, '_is_returning_home', False) and not getattr(drone, '_is_landing', False):
+            drone._is_returning_home = True
+            try:
+                from core.flight_modes import FlightMode
+                ah = drone.flight_controller._mode_handlers.get(FlightMode.AUTO)
+                if ah:
+                    ah.abort_mission()
+            except Exception:
+                pass
+            socketio.emit('low_battery_rth', {
+                'battery': round(drone.battery_level, 1),
+                'message': f"Low battery ({drone.battery_level:.1f}%)! Auto-RTH triggered."
+            })
+
         drone.failsafe_manager.check_gps(
             drone.gps_sensor.has_fix(),
             drone.gps_sensor.get_satellites(),
@@ -659,6 +733,23 @@ def handle_set_speed(data):
     emit('speed_changed', {'speed': simulation['speed']})
 
 
+@socketio.on('set_altitude')
+def handle_set_altitude(data):
+    """Set target cruise altitude."""
+    alt = float(data.get('altitude', 30.0))
+    drone = simulation['drone']
+    if drone:
+        try:
+            from core.flight_modes import FlightMode
+            ah = drone.flight_controller._mode_handlers.get(FlightMode.AUTO)
+            if ah and getattr(ah, '_mission', None):
+                for wp in ah._mission.waypoints:
+                    wp.altitude = alt
+        except Exception:
+            pass
+    emit('altitude_changed', {'altitude': alt})
+
+
 @socketio.on('set_scenario')
 def handle_set_scenario(data):
     """Set simulation scenario."""
@@ -685,26 +776,21 @@ def handle_return_to_home(data=None):
         return
 
     try:
-        # Calculate path
-        drone.wind_sensor.wind_speed = drone.wind_sensor.wind_speed  # Use current value
-        drone._battery_level_override = drone.battery_level
-
-        # Get waypoints
-        from core.path_planner import PathPlanner, Position, State
-        planner = PathPlanner()
-        current_pos = Position(drone.current_position[0], drone.current_position[1])
-        home_pos = Position(drone.home_position[0], drone.home_position[1])
-        state = State(battery_percent=drone.battery_level, wind_speed_m_s=drone.wind_sensor.wind_speed)
-
-        path = planner.plan_return(home_pos, current_pos, state)
-        waypoints = [(p.latitude, p.longitude) for p in path]
+        from core.flight_modes import FlightMode
+        ah = drone.flight_controller._mode_handlers.get(FlightMode.AUTO)
+        if ah:
+            try:
+                ah.abort_mission()
+            except Exception:
+                pass
 
         drone._is_returning_home = True
-
+        drone._is_flying = True
+        home_pos = drone.home_position
         emit('return_to_home_started', {
-            'waypoints': [{'lat': w[0], 'lon': w[1]} for w in waypoints],
+            'home': {'lat': home_pos[0], 'lon': home_pos[1]},
+            'message': 'Drone returning to home base'
         })
-
     except Exception as e:
         emit('error', {'message': str(e)})
 
@@ -813,6 +899,21 @@ def handle_start_landing(data=None):
     if not drone:
         emit('error', {'message': 'No drone initialized'})
         return
+
+    # Abort active mission so waypoints stop advancing
+    try:
+        from core.flight_modes import FlightMode
+        ah = drone.flight_controller._mode_handlers.get(FlightMode.AUTO)
+        if ah:
+            try:
+                ah.abort_mission()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    drone._is_returning_home = False
+    drone._is_landing = True
 
     mode_name = data.get('mode', 'normal') if data else 'normal'
     mode_map = {
